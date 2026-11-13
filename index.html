@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>«За своим столом» — бронь голосом</title>
+<style>
+:root{--bg:#fff8ee;--ink:#1d1d1b;--card:#fff;--accent:#0b6b5c;--accent-ink:#fff;--warn:#8a2b00;--line:#1d1d1b;
+--font:system-ui,"Segoe UI",Arial,sans-serif;--fs:22px;--radius:18px;--shadow:0 4px 14px rgba(0,0,0,.18)}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:var(--fs)/1.5 var(--font)}
+main{max-width:860px;margin:0 auto;padding:16px}
+.card{background:var(--card);border:3px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px;margin:14px 0}
+button,input,select{font:inherit;border-radius:var(--radius);border:3px solid var(--line);padding:14px 20px;min-height:56px}
+button{background:var(--accent);color:var(--accent-ink);cursor:pointer;margin:4px}
+button.sec{background:var(--card);color:var(--ink)}button:disabled{opacity:.5;cursor:not-allowed}
+:focus-visible{outline:5px solid #c25a00;outline-offset:3px}
+h1{margin:.2em 0}.lotti{font-size:64px;animation:b 3s ease-in-out infinite}
+@keyframes b{50%{transform:translateY(-6px)}}@media(prefers-reduced-motion:reduce){.lotti{animation:none}}
+#log{max-height:240px;overflow:auto}.g{font-weight:700}.l{color:var(--accent)}
+.status{font-weight:700;font-size:1.2em}.err{color:var(--warn);font-weight:700}
+table{border-collapse:collapse;width:100%}td,th{border:2px solid var(--line);padding:6px}
+.hide{display:none}
+</style></head><body><main>
+<p id="srv" class="err" hidden>⚠ Сервер недоступен: бронь не сохранится. Запустите «npm start» и откройте http://localhost:3000, а не сам файл.</p>
+
+<section id="home">
+ <div class="card"><div class="lotti" aria-hidden="true">🦎</div>
+ <h1>«За своим столом»</h1><p>Здравствуйте! Я Лотти, администратор ресторана. Забронирую столик голосом.</p>
+ <button id="start">🎤 Забронировать голосом</button>
+ <button class="sec" id="staffBtn">📋 Для сотрудников</button></div>
+ <div class="card"><b>Что можно сказать:</b> «Забронировать столик», «Два», «Завтра», «В девятнадцать часов», «Подтверждаю», «Адрес ресторана», «Часы работы», «Завершить без брони».</div>
+ <div class="card"><div>📍 <span id="addr"></span></div><div>🕒 <span id="hrs"></span></div></div>
+</section>
+
+<section id="book" class="hide">
+ <div class="card"><div class="status" id="state" role="status" aria-live="polite">✅ Можно говорить</div>
+ <div id="q" class="g"></div>
+ <button id="mic">🎤 Говорить</button><button class="sec" id="stop">⏹ Остановить</button>
+ <button class="sec" id="mute" aria-pressed="false">🔊 Озвучивание: вкл</button>
+ <button class="sec" id="repeat">🔁 Повторить</button>
+ <button class="sec" id="end">✖ Завершить без брони</button>
+ <p id="err" class="err" role="alert"></p>
+ <label>Или напишите: <input id="txt" autocomplete="off" aria-label="Текстовый ответ"></label><button id="send">Отправить</button></div>
+ <div class="card" id="sel"></div>
+ <div class="card hide" id="confirmBox"><button id="yes">✅ Да, всё верно</button><button class="sec" id="chT">Изменить время</button><button class="sec" id="chG">Изменить количество гостей</button><button class="sec" id="chD">Изменить день</button><button class="sec" id="chN">Изменить имя</button></div>
+ <div class="card hide" id="result" role="status"></div>
+ <div class="card"><b>История:</b> <button class="sec" id="clr">Очистить</button><div id="log" aria-live="polite"></div></div>
+ <div class="card"><b>Голос:</b> <select id="voice" aria-label="Голос"></select>
+ <button class="sec" id="sample">▶ Пример</button>
+ <div id="vhint" role="status"></div><label>Скорость <input type="range" id="rate" min="0.6" max="1.3" step="0.1" value="0.9"></label></div>
+</section>
+
+<section id="staff" class="hide">
+ <div class="card"><h2>Расписание сотрудника</h2>
+ <input id="tok" type="password" placeholder="Пароль" aria-label="Пароль"> <select id="day" aria-label="День"></select>
+ <button id="load">🔄 Обновить</button><div id="sched"></div></div>
+</section>
+<div class="card" id="mine"></div>
+<button class="sec" id="home2">← На главную</button>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const store={get:(k,d)=>{try{return JSON.parse(localStorage.getItem(k))??d}catch{return d}},set:(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch{}}};
+const show=n=>{for(const s of['home','book','staff'])$(s).classList.toggle('hide',s!==n);$('mine').classList.toggle('hide',n==='staff')};
+let INFO={address:'ДЕМО: г. Астана, ул. Примерная, 1',hours:'ДЕМО: ежедневно с 12:00 до 22:00',today:new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Almaty'}).format(new Date())};
+const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random().toString(36).slice(2);
+fetch('/api/info').then(r=>{if(!r.ok)throw 0;return r.json()}).then(i=>{INFO=i}).catch(()=>{$('srv').hidden=false}).finally(()=>{$('addr').textContent=INFO.address;$('hrs').textContent=INFO.hours;fillDays()});
+const dayWord=['сегодня','завтра','послезавтра'];
+const addDays=(d,k)=>{const t=new Date(d+'T00:00:00Z');t.setUTCDate(t.getUTCDate()+k);return t.toISOString().slice(0,10)};
+const fullDate=d=>new Date(d+'T12:00:00').toLocaleDateString('ru-RU',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+
+/* ---------- Голос ---------- */
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;let rec=null,muted=false,speaking=false,last='';
+const setState=(t)=>$('state').textContent=t;
+function voices(){const v=speechSynthesis.getVoices().filter(x=>/^ru/i.test(x.lang.replace('_','-')));
+ $('voice').innerHTML=v.length?v.map(x=>`<option value="${x.name}">${x.name}${x.localService?'':' (онлайн)'} — ${x.lang}</option>`).join(''):'<option value="">Русских голосов нет</option>';
+ $('vhint').textContent=v.length?'Доступно русских голосов: '+v.length:'На этом устройстве нет русских голосов. На Mac: Системные настройки → Универсальный доступ → Речь → Системный голос → «Управлять голосами» → Русский (например Milena, Yuri) → скачать, потом перезапустить браузер.';
+ const s=store.get('voice');if(s&&v.some(x=>x.name===s))$('voice').value=s}
+if('speechSynthesis' in window){speechSynthesis.onvoiceschanged=voices;voices();let n=0;const iv=setInterval(()=>{voices();if(++n>8)clearInterval(iv)},700)}
+$('rate').value=store.get('rate',0.9);
+$('voice').onchange=()=>store.set('voice',$('voice').value);$('rate').onchange=()=>store.set('rate',+$('rate').value);
+let sp1,sp2;
+function idle(){clearTimeout(sp1);clearTimeout(sp2);speaking=false;$('mic').disabled=false;setState('✅ Можно говорить')}
+function speak(t,force){if(!force)last=t;if((muted&&!force)||!('speechSynthesis' in window))return idle();
+ clearTimeout(sp1);clearTimeout(sp2);speechSynthesis.cancel();speaking=true;setState('🔈 Отвечаю');$('mic').disabled=true;
+ sp1=setTimeout(()=>{const u=new SpeechSynthesisUtterance(t);u.lang='ru-RU';u.rate=+$('rate').value;
+  const v=speechSynthesis.getVoices().find(x=>x.name===$('voice').value);if(v)u.voice=v;
+  u.onend=idle;u.onerror=idle;speechSynthesis.speak(u);
+  sp2=setTimeout(idle,Math.max(5000,t.length*130))},120)}
+$('sample').onclick=()=>speak('Здравствуйте! Я Лотти. Так звучит этот голос.',true);
+$('mute').onclick=()=>{muted=!muted;speechSynthesis.cancel();$('mute').textContent='🔊 Озвучивание: '+(muted?'выкл':'вкл');$('mute').setAttribute('aria-pressed',muted)};
+$('repeat').onclick=()=>speak(last,true);
+$('mic').onclick=()=>{$('err').textContent='';
+ if(!SR)return $('err').textContent='⚠ Этот браузер не умеет распознавать речь. Откройте в Chrome или пишите в поле ниже.';
+ speechSynthesis.cancel();rec=new SR();rec.lang='ru-RU';rec.interimResults=false;rec.maxAlternatives=1;
+ rec.onstart=()=>{setState('🎙 Слушаю');$('mic').disabled=true};
+ rec.onresult=e=>{setState('⏳ Обрабатываю');handle(e.results[0][0].transcript)};
+ rec.onerror=e=>{$('err').textContent=({'not-allowed':'⚠ Доступ к микрофону запрещён. Разрешите его в настройках браузера или пишите текстом.','service-not-allowed':'⚠ Доступ к микрофону запрещён.','audio-capture':'⚠ Микрофон не найден.','network':'⚠ Нет связи с сервисом распознавания. Пишите текстом.','no-speech':'Я ничего не услышала. Нажмите «Говорить» ещё раз.'})[e.error]||'⚠ Ошибка распознавания: '+e.error;setState('✅ Можно говорить');$('mic').disabled=false};
+ rec.onend=()=>{if(!speaking)$('mic').disabled=false};try{rec.start()}catch{}};
+$('stop').onclick=()=>{try{rec&&rec.abort()}catch{};speechSynthesis.cancel();idle()};
+$('send').onclick=()=>{const v=$('txt').value.trim();if(v){$('txt').value='';handle(v)}};
+$('txt').onkeydown=e=>{if(e.key==='Enter')$('send').click()};
+
+/* ---------- Диалог (машина состояний) ---------- */
+let S;const newS=()=>({step:'idle',guests:null,off:null,hour:null,name:null,alt:null,key:null,busy:false});
+const NUM={'1':1,один:1,одного:1,одна:1,'2':2,два:2,двух:2,две:2,'3':3,три:3,трёх:3,трех:3,'4':4,четыре:4,четырёх:4,четырех:4,'5':5,пять:5,пятеро:5,пятерых:5,'6':6,шесть:6,шестеро:6,шестерых:6};
+const HOUR={'18':18,восемнадцать:18,'19':19,девятнадцать:19,'20':20,двадцать:20};
+const DAY={сегодня:0,завтра:1,послезавтра:2};
+const Q={guests:'Сколько будет гостей? Скажите число от одного до шести.',day:'На какой день? Сегодня, завтра или послезавтра.',time:'На какое время? В восемнадцать, в девятнадцать или в двадцать часов.',name:'Как вас зовут?'};
+const toks=t=>t.toLowerCase().replace(/ё/g,'е').split(/[^а-яa-z0-9]+/).filter(Boolean);
+const pick=(t,m)=>{for(const w of t){const k=w.replace(/ё/g,'е');if(Object.hasOwn(m,k))return m[k]}return null};
+const date=()=>addDays(INFO.today,S.off);
+let hist=store.get('hist',[]);
+function addLine(who,t){const d=document.createElement('div'),b=document.createElement('span');b.className=who==='Вы'?'g':'l';b.textContent=who+': ';d.append(b,t);$('log').append(d);$('log').scrollTop=1e9}
+const say=(who,t)=>{addLine(who,t);hist.push([who,t]);hist=hist.slice(-200);store.set('hist',hist)};
+hist.forEach(([w,t])=>addLine(w,t));
+$('clr').onclick=()=>{hist=[];store.set('hist',[]);$('log').innerHTML=''};
+function ask(t){say('Лотти',t);$('q').textContent=t;speak(t);render()}
+function render(){const p=[];if(S.guests)p.push('👥 Гостей: '+S.guests);if(S.off!=null)p.push('📅 '+fullDate(date()));if(S.hour)p.push('🕒 '+S.hour+':00');if(S.name)p.push('👤 '+S.name);
+ $('sel').textContent=p.length?p.join(' · '):'Параметры пока не выбраны';$('confirmBox').classList.toggle('hide',S.step!=='confirm'&&S.step!=='change')}
+function next(){if(!S.guests)return S.step='guests',ask(Q.guests);if(S.off==null)return S.step='day',ask(Q.day);
+ if(!S.hour)return S.step='time',ask(Q.time);if(!S.name)return S.step='name',ask(Q.name);
+ S.step='confirm';S.key=uid();
+ ask(`Проверьте. ${S.name}, ${fullDate(date())}, в ${S.hour} часов, гостей: ${S.guests}. Всё готово? Скажите «Да» — и я запишу бронь, или «Изменить».`)}
+function startBooking(){S=newS();show('book');$('result').classList.add('hide');if(hist.length)say('—','Новая бронь');next()}
+function showResult(b){const el=$('result');el.classList.remove('hide');el.innerHTML='<h2>✅ Бронь подтверждена</h2>';
+ [['Номер брони',b.code],['Имя',b.name],['Дата',fullDate(b.date)],['Время',b.slot+':00'],['Столик','№'+b.table_id],['Гостей',b.guests]].forEach(([k,v])=>{const d=document.createElement('div');d.className='g';d.textContent=k+': '+v;el.append(d)})}
+function saveBooking(b){const m=store.get('bookings',[]).filter(x=>x.code!==b.code);m.push(b);store.set('bookings',m);renderMine()}
+function renderMine(){const m=store.get('bookings',[]),el=$('mine');el.innerHTML='<b>📒 Мои брони (на этом устройстве):</b>';
+ if(!m.length){const d=document.createElement('div');d.textContent='Пока нет';el.append(d)}
+ m.slice().reverse().forEach(b=>{const d=document.createElement('div');d.textContent=`${b.code} · ${b.name} · ${fullDate(b.date)} · ${b.slot}:00 · столик №${b.table_id} · гостей ${b.guests}`;el.append(d)})}
+function finish(msg){S=newS();ask(msg||'Хорошо, бронь не создана. Если понадобится столик, нажмите «Забронировать».');S.step='idle'}
+async function confirm(){if(S.busy)return;S.busy=true;$('yes').disabled=true;setState('⏳ Обрабатываю');
+ try{const r=await fetch('/api/bookings',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':S.key},body:JSON.stringify({date:date(),hour:S.hour,guests:S.guests,name:S.name})});
+  const j=await r.json();
+  if(r.ok){const b=j.booking;const t=`Бронь подтверждена. Номер ${b.code}. ${b.name}, ${fullDate(b.date)}, в ${b.slot} часов, столик номер ${b.table_id}, гостей: ${b.guests}.`;
+   S.step='idle';saveBooking(b);showResult(b);ask(t)}
+  else if(r.status===409||(r.status===400&&j.error)){
+   if(j.alt){S.alt=j.alt;S.step='alt';ask(`${j.error||'Время занято'}. Ближайшее свободное время — ${j.alt} часов. Подойдёт? Скажите «Да» или «Нет».`)}
+   else{S.hour=null;S.step='time';ask(`${j.error||'Свободных столиков нет'}. Других вариантов в этот день нет. Выберите другое время или завершите без брони.`)}}
+  else ask('Не получилось сохранить бронь. Попробуйте ещё раз.')}
+ catch{ask('Нет связи с сервером. Бронь не сохранена. Попробуйте ещё раз.')}
+ S.busy=false;$('yes').disabled=false}
+function handle(raw){say('Вы',raw);const t=toks(raw),j=t.join(' ');setState('✅ Можно говорить');
+ if(S.step==='idle'){if(/забронир|брон/.test(j))return startBooking()}
+ if(/адрес/.test(j)){const a='Адрес: '+INFO.address;say('Лотти',a);speak(a+'. '+(S.step==='idle'?'':'Вернёмся к вопросу. '+$('q').textContent));return}
+ if(/часы|работы|график/.test(j)){const a='Часы работы: '+INFO.hours;say('Лотти',a);speak(a+'. '+(S.step==='idle'?'':'Вернёмся к вопросу. '+$('q').textContent));return}
+ if(/завершить|без брони/.test(j))return finish();
+ if(S.step==='idle')return ask('Скажите «Забронировать столик», «Адрес ресторана» или «Часы работы».');
+ if(/изменить время/.test(j)){S.hour=null;S.step='time';return ask(Q.time)}
+ if(/изменить количество/.test(j)){S.guests=null;S.step='guests';return ask(Q.guests)}
+ if(S.step==='guests'){const n=pick(t,NUM);if(n)return S.guests=n,S.key=null,next()}
+ else if(S.step==='day'){const d=pick(t,DAY);if(d!=null)return S.off=d,next()}
+ else if(S.step==='time'){const h=pick(t,HOUR);if(h)return S.hour=h,next()}
+ else if(S.step==='name'){if(raw.trim().length>=2&&raw.trim().length<=40&&!/забронир/.test(j)){const n=raw.trim().replace(/[.!?]+$/,'');S.name=n[0].toUpperCase()+n.slice(1);return next()}}
+ else if(S.step==='confirm'){if(/подтверждаю|^да$|верно|готово/.test(j))return confirm();
+  if(/изменить|исправить|нет/.test(j)){S.step='change';return ask('Что изменить? Скажите: время, день, количество гостей или имя.')}}
+ else if(S.step==='change'){if(/врем/.test(j)){S.hour=null;return next()}if(/ден/.test(j)){S.off=null;return next()}if(/гост|колич/.test(j)){S.guests=null;return next()}if(/им[яе]/.test(j)){S.name=null;return next()}}
+ else if(S.step==='alt'){if(j==='да'){S.hour=S.alt;S.step='confirm';return next()}if(j==='нет'){S.hour=null;S.step='time';return ask('Хорошо. Выберите другое время или скажите «Завершить без брони».')}}
+ const help={guests:'Скажите число гостей от одного до шести.',day:'Допустимо: сегодня, завтра, послезавтра.',time:'Допустимо: восемнадцать, девятнадцать или двадцать часов.',name:'Назовите имя.',confirm:'Скажите «Да», если всё верно, или «Изменить».',change:'Скажите: время, день, количество гостей или имя.',alt:'Скажите «Да» или «Нет».'}[S.step];
+ const m='Не поняла. '+help+' '+($('q').textContent);say('Лотти',m);speak(m)}
+$('yes').onclick=()=>confirm();$('chT').onclick=()=>handle('изменить время');$('chG').onclick=()=>handle('изменить количество гостей');$('chD').onclick=()=>{S.off=null;next()};$('chN').onclick=()=>{S.name=null;next()};
+$('end').onclick=()=>handle('завершить без брони');$('start').onclick=startBooking;
+$('home2').onclick=()=>{speechSynthesis.cancel();show('home')};
+S=newS();renderMine();
+
+/* ---------- Сотрудник ---------- */
+function fillDays(){$('day').innerHTML=[0,1,2].map(k=>`<option value="${addDays(INFO.today,k)}">${dayWord[k]} (${addDays(INFO.today,k)})</option>`).join('')}
+$('staffBtn').onclick=()=>show('staff');
+$('load').onclick=async()=>{const el=$('sched');el.textContent='Загрузка…';
+ const r=await fetch('/api/schedule?date='+$('day').value,{headers:{'x-staff-token':$('tok').value}});
+ if(!r.ok){el.textContent='⚠ '+(r.status===401?'Неверный пароль':'Ошибка сервера');return}
+ const d=await r.json();let h='<table><tr><th>Столик</th>'+[18,19,20].map(s=>`<th>${s}:00</th>`).join('')+'</tr>';
+ for(const t of d.tables){h+=`<tr><td>№${t.id} (${t.seats} мест)</td>`;
+  for(const s of [18,19,20]){const b=d.bookings.find(x=>x.table_id===t.id&&x.slot===s);
+   h+='<td>'+(b?`⛔ Занят: <span class="n"></span>`:'✅ Свободен')+'</td>'}h+='</tr>'}
+ el.innerHTML=h+'</table>';
+ const cells=el.querySelectorAll('.n');let i=0;for(const t of d.tables)for(const s of [18,19,20]){const b=d.bookings.find(x=>x.table_id===t.id&&x.slot===s);if(b)cells[i++].textContent=`${b.code}, ${b.name}, ${b.guests} гост.`}}
+</script></body></html>
